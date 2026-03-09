@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>SecretChat</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        themeMain: 'var(--main-color)',
+                        themeBg: 'var(--bg-color)',
+                        themeSurface: 'var(--surface-color)',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        :root {
+            --main-color: #0A84FF; --bg-color: #000000; --surface-color: #1C1C1E;
+            --text-color: #ffffff; --bubble-my: #0A84FF; --bubble-other: #262626;
+        }
+
+        /* === 4 THEMES === */
+        [data-theme='light'] { --main-color: #007AFF; --bg-color: #ffffff; --surface-color: #f2f2f7; --text-color: #000000; --bubble-my: #007AFF; --bubble-other: #E5E5EA; }
+        [data-theme='pink'] { --main-color: #ff69b4; --bg-color: #2b0812; --surface-color: #4a0e1e; --text-color: #ffcce0; --bubble-my: #ff1493; --bubble-other: #6b1028; }
+        [data-theme='hacker'] { --main-color: #00ff00; --bg-color: #000000; --surface-color: #001100; --text-color: #00ff00; --bubble-my: #003300; --bubble-other: #002200; font-family: 'Courier New', monospace; }
+
+        body { height: 100dvh; overflow: hidden; -webkit-tap-highlight-color: transparent; transition: background 0.5s, color 0.5s; background-color: var(--bg-color); color: var(--text-color); font-family: 'Inter', sans-serif; }
+        .glass { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.05); background: var(--surface-color); opacity: 0.98; }
+        
+        video { object-fit: cover; width: 100%; height: 100%; }
+        .vid-contain { object-fit: contain; background: black; } 
+        #local-video { transform: scaleX(-1); }
+
+        #matrix-canvas, #flower-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; overflow: hidden; }
+        
+        .flower { position: absolute; top: -50px; animation: fall linear infinite; font-size: 24px; white-space: nowrap; }
+        @keyframes fall { to { transform: translateY(110vh) rotate(360deg); } }
+
+        .pulse-call { animation: pulseCall 1.5s infinite; }
+        @keyframes pulseCall { 0% { box-shadow: 0 0 0 0 var(--main-color); } 70% { box-shadow: 0 0 0 20px rgba(0,0,0,0); } 100% { box-shadow: 0 0 0 0 rgba(0,0,0,0); } }
+        
+        /* POPUP ANIMATION */
+        .pop-center { animation: popCenter 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes popCenter { 
+            0% { opacity: 0; transform: scale(0.8); } 
+            100% { opacity: 1; transform: scale(1); } 
+        }
+        
+        .blur-locked { filter: blur(4px); opacity: 0.5; pointer-events: none; user-select: none; transition: all 0.5s ease; }
+        .btn-label { font-size: 9px; margin-top: 2px; opacity: 0.8; display: none; }
+        @media (min-width: 768px) { .btn-label { display: block; } }
+
+        /* Layout Transitions */
+        #main-nav, #chat-header, #landing-page, #chat-interface { transition: top 0.4s ease, padding-top 0.4s ease; }
+    </style>
+</head>
+<body class="flex flex-col relative transition-colors duration-300">
+
+    <canvas id="matrix-canvas" style="display:none;"></canvas>
+    <div id="flower-container" style="display:none;"></div>
+
+    <div id="promo-banner" class="fixed top-0 w-full z-[60] px-4 py-3 flex items-start justify-between gap-3 shadow-md border-b border-white/10" style="background-color: var(--surface-color);">
+        <div class="flex-1 text-left">
+            <h3 class="text-xs font-bold mb-1 leading-tight" style="color: var(--main-color);">
+                We don't have your data, so we can't sell it.
+            </h3>
+            <p class="text-[10px] opacity-80 leading-snug">
+                Since we don't store anything, we can't sell anything to pay bills. SecretChat relies entirely on your support to keep this system running securely.
+                <a href="https://buymeacoffee.com/" target="_blank" class="inline-block ml-1 font-bold underline hover:text-white" style="color: var(--main-color);">Donate Now &rarr;</a>
+            </p>
+        </div>
+        <button onclick="closeBanner()" class="text-gray-400 hover:text-white transition p-1">
+            <i class="fas fa-times text-sm"></i>
+        </button>
+    </div>
+
+    <nav id="main-nav" class="fixed top-[60px] w-full z-50 h-14 flex justify-between items-center px-5 glass">
+        <div class="flex items-center gap-2">
+            <i class="fas fa-lock text-xl" style="color: var(--main-color);"></i>
+            <span class="font-semibold text-lg tracking-tight">SecretChat</span>
+        </div>
+        <div class="flex items-center gap-3">
+            <button onclick="cycleTheme()" class="w-8 h-8 rounded-full bg-gray-500/10 flex items-center justify-center transition active:scale-90 border border-white/10">
+                <i class="fas fa-palette text-xs" style="color: var(--main-color);"></i>
+            </button>
+            <button onclick="panicMode()" class="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center transition active:scale-90 border border-red-500/30">
+                <i class="fas fa-eye-slash text-xs"></i>
+            </button>
+            <a href="https://buymeacoffee.com/" target="_blank" class="px-4 py-1.5 rounded-full text-[11px] font-bold text-white shadow-lg active:scale-95 transition hover:opacity-90" style="background-color: var(--main-color);">Donate</a>
+        </div>
+    </nav>
+
+    <div id="toast" class="fixed top-40 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full text-sm font-medium shadow-2xl opacity-0 transition-opacity z-[90] pointer-events-none border border-white/10" style="background-color: var(--surface-color);">Notification</div>
+
+    <div id="custom-confirm" class="hidden fixed inset-0 z-[150] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-[#1c1c1e] border border-white/10 p-6 rounded-3xl w-full max-w-xs text-center shadow-2xl pop-center relative mx-auto">
+            <h3 class="text-lg font-bold text-white mb-2" id="confirm-title">Permission Request</h3>
+            <p class="text-gray-400 text-sm mb-6 leading-relaxed" id="confirm-text">User wants to download.</p>
+            <div class="flex gap-3 justify-center">
+                <button id="btn-deny" class="flex-1 py-2.5 rounded-xl bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition">Deny</button>
+                <button id="btn-allow" class="flex-1 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 transition" style="background-color: var(--main-color);">Allow</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="call-end-popup" class="hidden fixed inset-0 z-[120] flex items-center justify-center pointer-events-none">
+        <div class="bg-black/80 backdrop-blur-md px-8 py-5 rounded-3xl flex flex-col items-center justify-center pop-center shadow-2xl border border-white/10 pointer-events-auto">
+            <div class="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center mb-3">
+                <i id="end-icon" class="fas fa-phone-slash text-red-500 text-xl"></i>
+            </div>
+            <span id="end-text" class="text-white font-bold text-lg">Call Ended</span>
+        </div>
+    </div>
+
+    <div id="landing-page" class="h-full flex flex-col items-center justify-center px-4 pt-40 pb-safe relative transition-all">
+        <div class="w-full max-w-md text-center z-10 flex-1 flex flex-col justify-center">
+            <h1 class="text-3xl font-bold mb-1 tracking-tight">Secret Chat, Call & Share.</h1>
+            <p class="opacity-60 mb-6 text-sm">End-to-end encrypted. No logs.</p>
+            
+            <div class="rounded-[2.5rem] p-5 shadow-lg border border-white/10 w-full mb-4 relative overflow-hidden" style="background-color: var(--surface-color);">
+                <div class="flex flex-col text-left z-10 w-full">
+                    <div class="flex items-center gap-3 mb-3">
+                        <div class="flex items-center gap-1.5"><div id="status-dot" class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></div><span id="status-text" class="text-[10px] font-bold tracking-wider opacity-70">WAITING</span></div>
+                        <div id="status-op-container" class="flex items-center gap-1.5"><div id="op-dot" class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></div><span id="op-text" class="text-[10px] font-bold tracking-wider opacity-70">WAITING</span></div>
+                    </div>
+                    <div class="flex items-start justify-between w-full">
+                        <div class="flex flex-col w-full min-w-0">
+                            <span class="text-[9px] font-semibold mb-0.5 tracking-wider uppercase opacity-50">My Secret ID</span>
+                            <span id="my-id-display" class="font-mono text-[13px] font-medium break-all leading-tight" style="color: var(--main-color);">Initializing...</span>
+                        </div>
+                        <button id="copy-id-btn" onclick="copyId()" class="w-10 h-10 rounded-full flex-none flex items-center justify-center active:scale-90 transition ml-3 mt-1 bg-white/5 hover:bg-white/10 blur-locked" style="color: var(--main-color);"><i class="fas fa-copy"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="connect-box" class="rounded-[2.5rem] p-6 shadow-xl border border-white/10 w-full mb-4 blur-locked" style="background-color: var(--surface-color);">
+                <input type="text" id="friend-id" placeholder="Paste Friend's ID" class="w-full bg-black/10 rounded-2xl px-4 py-3.5 text-center text-sm outline-none focus:ring-2 font-mono transition-all mb-4" style="color: var(--text-color); border: 1px solid rgba(255,255,255,0.1); --tw-ring-color: var(--main-color);">
+                <button onclick="connectToFriend()" class="w-full text-white font-semibold py-3.5 rounded-2xl shadow-lg active:scale-95 transition-transform text-sm" style="background-color: var(--main-color);">Connect Now</button>
+                <div class="mt-4 mb-2"><button onclick="copyLink()" class="text-xs font-medium hover:underline" style="color: var(--main-color);">Copy Invite Link <i class="fas fa-link ml-1"></i></button></div>
+                <p class="text-[9px] opacity-40 px-2 mt-2 leading-tight">By using SecretChat you agree to our <a href="/terms" class="no-underline hover:text-blue-500">Terms of Use</a> and <a href="/terms" class="no-underline hover:text-blue-500">Privacy Policy</a>.</p>
+            </div>
+        </div>
+        
+        <div class="w-full flex justify-between px-6 pb-6 text-[10px] opacity-40 z-10 mt-auto whitespace-nowrap overflow-hidden text-ellipsis">
+            <span>© 2025 SecretChat</span>
+            <span class="mx-1">•</span>
+            <a href="/terms" class="hover:text-white">Terms</a>
+            <span class="mx-1">•</span>
+            <a href="/terms" class="hover:text-white">Privacy</a>
+            <span class="mx-1">•</span>
+            <a href="/terms" class="hover:text-white">Contact</a>
+        </div>
+    </div>
+
+    <div id="chat-interface" class="hidden h-full flex flex-col pt-28 relative transition-all duration-300" style="background-color: var(--bg-color);">
+        <div id="chat-header" class="fixed top-[116px] w-full z-40 border-b h-14 flex justify-between items-center px-4 shadow-sm transition-all duration-300" style="background-color: var(--surface-color); border-color: rgba(255,255,255,0.05);">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"><i class="fas fa-user"></i></div>
+                <div>
+                    <h3 id="chat-status-text" class="font-semibold text-sm leading-tight">Secret Friend</h3>
+                    <p id="chat-sub-status" class="text-[10px] text-green-500 leading-tight">● Secure</p>
+                </div>
+            </div>
+            <div id="header-buttons" class="flex gap-4 pr-1 items-center" style="color: var(--main-color);">
+                <button onclick="startCall(false)" class="p-2.5 rounded-full hover:bg-gray-500/10 transition active:scale-90"><i class="fas fa-phone-alt text-lg"></i></button>
+                <button onclick="startCall(true)" class="p-2.5 rounded-full hover:bg-gray-500/10 transition active:scale-90"><i class="fas fa-video text-lg"></i></button>
+            </div>
+        </div>
+        
+        <div id="chat-box" class="flex-1 overflow-y-auto p-4 space-y-3 pb-24 pt-4">
+            <div class="flex justify-center mb-4 px-4">
+                <div class="text-center px-4 py-2 rounded-xl max-w-sm opacity-60" style="background-color: rgba(255, 255, 255, 0.03);">
+                    <p class="text-[10px] leading-snug">
+                        <i class="fas fa-lock text-[10px] text-yellow-500 mb-1"></i><br>
+                        Messages & Calls are end-to-end encrypted. No one outside this chat, not even SecretChat, can read or store.
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="fixed bottom-0 w-full border-t p-2 pb-safe flex items-center gap-2 z-50 transition-colors pr-3" style="background-color: var(--surface-color); border-color: rgba(255,255,255,0.05);">
+            <label class="p-2 cursor-pointer active:scale-90 transition" style="color: var(--main-color);"><i class="fas fa-paperclip text-2xl"></i><input type="file" id="file-input" class="hidden" onchange="sendFile()"></label>
+            <input type="text" id="msg-input" placeholder="Secret Message..." class="flex-1 rounded-full px-4 py-2.5 text-[15px] border focus:border-opacity-100 outline-none transition-all bg-black/10" style="border-color: rgba(255,255,255,0.1); color: var(--text-color); focus:border-color: var(--main-color);" onkeypress="if(event.key === 'Enter') sendMessage()" oninput="sendTyping()" onblur="stopTyping()">
+            <button onclick="sendMessage()" class="w-11 h-11 text-white rounded-full flex-none flex items-center justify-center active:scale-90 transition shadow-lg mr-2" style="background-color: var(--main-color);"><i class="fas fa-arrow-up text-lg font-bold"></i></button>
+        </div>
+    </div>
+
+    <div id="incoming-modal" class="hidden fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center gap-12 pop-center">
+        <div class="text-center">
+            <div class="w-28 h-28 rounded-full bg-gray-800 flex items-center justify-center mx-auto mb-6 shadow-2xl border border-gray-700 pulse-call"><i class="fas fa-user text-5xl text-gray-500"></i></div>
+            <h2 class="text-3xl text-white font-semibold mb-2">Secret Call</h2>
+            <p id="incoming-type" class="text-gray-400 text-sm">Incoming secure call...</p>
+        </div>
+        <div class="w-full px-12 flex justify-center gap-16">
+            <div class="flex flex-col items-center gap-3"><button onclick="declineCall()" class="w-20 h-20 rounded-full bg-red-500 flex items-center justify-center shadow-lg active:scale-90 transition"><i class="fas fa-phone-slash text-white text-2xl"></i></button><span class="text-white text-sm font-medium">Decline</span></div>
+            <div class="flex flex-col items-center gap-3"><button onclick="answerCall()" class="w-20 h-20 rounded-full bg-[#34c759] flex items-center justify-center shadow-lg active:scale-90 transition pulse-call"><i class="fas fa-phone text-white text-2xl"></i></button><span class="text-white text-sm font-medium">Accept</span></div>
+        </div>
+    </div>
+
+    <div id="video-ui" class="hidden fixed inset-0 z-[60] bg-black flex">
+        <video id="remote-video" autoplay playsinline class="vid-cover"></video>
+        <div class="absolute bottom-28 left-6 w-28 h-40 bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-2xl z-20 md:bottom-6">
+            <video id="local-video" autoplay muted playsinline class="vid-cover"></video>
+        </div>
+
+        <div class="absolute flex z-30 transition-all gap-4 
+            bottom-6 left-1/2 -translate-x-1/2 flex-row p-3 rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 w-11/12 justify-between flex-wrap
+            md:bottom-auto md:left-auto md:right-6 md:top-1/2 md:-translate-y-1/2 md:translate-x-0 md:flex-col md:p-3 md:w-auto md:rounded-full">
+            
+            <div class="flex flex-col items-center">
+                <button onclick="toggleVideo()" class="w-10 h-10 rounded-full bg-gray-700/80 text-white flex items-center justify-center active:bg-gray-600 shadow-md transition-all"><i id="vid-icon" class="fas fa-video text-sm"></i></button>
+                <span class="btn-label text-white">Cam</span>
+            </div>
+            <div class="flex flex-col items-center">
+                <button onclick="switchCamera()" class="w-10 h-10 rounded-full bg-gray-700/80 text-white flex items-center justify-center active:bg-gray-600 shadow-md transition-all"><i class="fas fa-sync text-sm"></i></button>
+                <span class="btn-label text-white">Flip</span>
+            </div>
+            <div class="flex flex-col items-center">
+                <button onclick="toggleAudio()" class="w-10 h-10 rounded-full bg-gray-700/80 text-white flex items-center justify-center active:bg-gray-600 shadow-md transition-all"><i id="mic-icon-video" class="fas fa-microphone text-sm"></i></button>
+                <span class="btn-label text-white">Mute</span>
+            </div>
+            <div class="flex flex-col items-center">
+                <button onclick="endCall()" class="w-12 h-12 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg active:scale-90 transition mt-0 md:mt-2"><i class="fas fa-phone-slash text-lg"></i></button>
+                <span class="btn-label text-white">End</span>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="snap-canvas" class="hidden"></canvas>
+    <audio id="audio-element" autoplay playsinline></audio>
+    <audio id="ringtone" loop src="https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3"></audio>
+    <audio id="msg-sound" src="https://assets.mixkit.co/active_storage/sfx/2346/2346-preview.mp3"></audio>
+
+    <script>
+        // --- LAYOUT MANAGER ---
+        function closeBanner() {
+            document.getElementById('promo-banner').style.display = 'none';
+            document.getElementById('main-nav').style.top = '0';
+            document.getElementById('landing-page').style.paddingTop = '5rem';
+            if(document.getElementById('chat-header')) document.getElementById('chat-header').style.top = '3.5rem';
+        }
+        window.onload = () => {
+             const banner = document.getElementById('promo-banner');
+             if(banner) {
+                 const bannerH = banner.offsetHeight;
+                 document.getElementById('main-nav').style.top = bannerH + 'px';
+                 if(document.getElementById('chat-header')) document.getElementById('chat-header').style.top = (bannerH + 56) + 'px';
+             }
+        };
+
+        // --- THEMES ---
+        const themes = ['dark', 'light', 'pink', 'hacker'];
+        let currentTheme = 0;
+        function cycleTheme() {
+            currentTheme = (currentTheme + 1) % themes.length;
+            const theme = themes[currentTheme];
+            document.documentElement.setAttribute('data-theme', theme);
+            const canvas = document.getElementById('matrix-canvas');
+            if(theme === 'hacker') { canvas.style.display = 'block'; startMatrix(); } else { canvas.style.display = 'none'; stopMatrix(); }
+            const heartCont = document.getElementById('flower-container');
+            heartCont.innerHTML = ''; 
+            if(theme === 'pink' || theme === 'couple') { heartCont.style.display='block'; startFlowers(); } else { heartCont.style.display='none'; }
+        }
+
+        function panicMode() { window.location.href = "https://www.wikipedia.org"; }
+
+        // --- ANIMATIONS ---
+        let matrixInterval, flowerInterval;
+        function startMatrix() { const canvas = document.getElementById('matrix-canvas'); const ctx = canvas.getContext('2d'); canvas.width = window.innerWidth; canvas.height = window.innerHeight; const chars = '01'; const fs = 16; const cols = canvas.width/fs; const drops = Array(Math.floor(cols)).fill(1); clearInterval(matrixInterval); matrixInterval = setInterval(() => { ctx.fillStyle = 'rgba(0, 0, 0, 0.05)'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#0F0'; ctx.font = fs + 'px monospace'; for(let i=0; i<drops.length; i++) { const text = chars.charAt(Math.floor(Math.random()*chars.length)); ctx.fillText(text, i*fs, drops[i]*fs); if(drops[i]*fs > canvas.height && Math.random() > 0.975) drops[i] = 0; drops[i]++; } }, 30); }
+        function stopMatrix() { clearInterval(matrixInterval); }
+        function startFlowers() { const cont = document.getElementById('flower-container'); const items = ['🌹', '🌸', '💖']; clearInterval(flowerInterval); flowerInterval = setInterval(() => { const el = document.createElement('div'); el.classList.add('flower'); el.innerHTML = items[Math.floor(Math.random() * items.length)]; el.style.left = Math.random() * 90 + "vw"; el.style.animationDuration = Math.random() * 3 + 4 + "s"; el.style.color = '#ff69b4'; cont.appendChild(el); setTimeout(() => el.remove(), 7000); }, 400); }
+
+        // --- CORE ---
+        const peer = new Peer(null, { config: { 'iceServers': [ { url: 'stun:stun.l.google.com:19302' } ] } });
+        let conn=null, currentCall=null, localStream=null, myID="", pendingCall=null;
+        let isVideoCall = false, currentCamMode = 'user', isRecording = false, mediaRecorder = null;
+        let recSeconds = 0, recInterval = null;
+        let heldFiles = {};
+        const ringtone = document.getElementById('ringtone');
+        const msgSound = document.getElementById('msg-sound');
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        // Custom Confirm Logic
+        function showCustomConfirm(title, text, onAllow) {
+            const modal = document.getElementById('custom-confirm');
+            document.getElementById('confirm-title').innerText = title;
+            document.getElementById('confirm-text').innerText = text;
+            const btnAllow = document.getElementById('btn-allow');
+            const btnDeny = document.getElementById('btn-deny');
+            
+            // Reset Listeners (Clone hack)
+            const newAllow = btnAllow.cloneNode(true);
+            const newDeny = btnDeny.cloneNode(true);
+            btnAllow.parentNode.replaceChild(newAllow, btnAllow);
+            btnDeny.parentNode.replaceChild(newDeny, btnDeny);
+            
+            newAllow.onclick = () => { modal.classList.add('hidden'); onAllow(); };
+            newDeny.onclick = () => { modal.classList.add('hidden'); conn.send({type:'file-reject'}); showToast("Rejected"); };
+            modal.classList.remove('hidden');
+        }
+
+        function showToast(m){ const t=document.getElementById('toast'); t.innerText=m; t.style.opacity='1'; setTimeout(()=>t.style.opacity='0',2500); }
+        function tryConnect(id, a=3) { if(a<=0){showToast("Connection failed.");return;} if(!peer.id){setTimeout(()=>tryConnect(id,a),1000);return;} const c=peer.connect(id); setupConnection(c,id,a); }
+
+        const hackerTexts = ["ENCRYPTING CHATS...", "PROTECTING CONNECTION...", "SECURING NODES...", "MASKING IP ADDRESS...", "GENERATING KEYS..."];
+        let hackerIdx = 0;
+        const hackerInterval = setInterval(() => {
+            const el = document.getElementById('my-id-display');
+            if(myID) { 
+                clearInterval(hackerInterval); el.innerText = myID; el.style.color = "var(--text-color)"; el.classList.add('select-all');
+                document.getElementById('status-dot').className = "w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm";
+                document.getElementById('status-text').innerText = "ACTIVE"; document.getElementById('status-text').style.color = "#22c55e";
+                document.getElementById('op-dot').className = "w-2.5 h-2.5 rounded-full shadow-sm"; document.getElementById('op-dot').style.backgroundColor = "var(--main-color)";
+                document.getElementById('op-text').innerText = "OPERATIONAL"; document.getElementById('op-text').style.color = "var(--main-color)";
+                document.getElementById('connect-box').classList.remove('blur-locked');
+                document.getElementById('copy-id-btn').classList.remove('blur-locked');
+                return; 
+            }
+            el.innerText = hackerTexts[hackerIdx % hackerTexts.length]; hackerIdx++;
+        }, 250);
+
+        peer.on('open', (id) => { myID=id; if(urlParams.get('join')){ document.getElementById('friend-id').value=urlParams.get('join'); showToast("Magic Link! Connecting..."); tryConnect(urlParams.get('join')); } });
+        peer.on('connection', c=>{ setupConnection(c); });
+        peer.on('call', c=>{ 
+            pendingCall=c; isVideoCall = (c.metadata && c.metadata.type === 'video'); 
+            document.getElementById('incoming-type').innerText = isVideoCall ? "Incoming Video Call..." : "Incoming Audio Call..."; 
+            document.getElementById('incoming-modal').classList.remove('hidden'); 
+            ringtone.currentTime = 0; ringtone.play().catch(e=>{}); 
+        });
+
+        function connectToFriend(){ const id=document.getElementById('friend-id').value.trim(); if(!id) return showToast("Enter ID!"); showToast("Connecting..."); tryConnect(id); }
+        function setupConnection(c, rid=null, rc=0){ 
+            conn = c; conn.on('open', ()=>{ 
+                 document.getElementById('promo-banner').style.display = 'none';
+                 document.getElementById('main-nav').style.top = '0';
+                 document.getElementById('chat-header').style.top = '3.5rem';
+                 document.getElementById('landing-page').classList.add('hidden'); 
+                 document.getElementById('chat-interface').classList.remove('hidden'); 
+            }); 
+            conn.on('data', d=>{ 
+                if(d.type==='text') addMsg(d.content,'other'); if(d.type==='file') handleIncomingFile(d); 
+                if(d.type==='sys') handleSysMsg(d.content); if(d.type==='typing') showTyping(d.content);
+                if(d.type==='img-req') handleImageRequest(d); if(d.type==='img-allow') handleImageAllow(d);
+                if(d.type==='file-offer') handleFileOffer(d); if(d.type==='file-request') handleFileRequest(d);
+                if(d.type==='file-data') handleFileData(d); if(d.type==='file-reject') showToast("Download Rejected");
+            }); 
+            conn.on('close', ()=>{ showToast("Connection Lost"); setTimeout(()=>location.reload(),2000); }); conn.on('error', () => { if(rid) setTimeout(() => tryConnect(rid, rc-1), 1000); }); 
+        }
+
+        // --- IMAGE & FILE LOGIC ---
+        function sendFile(){ const f=document.getElementById('file-input').files[0]; if(f&&conn?.open){ const fid=Date.now(); 
+            if(f.type.startsWith('image/')) {
+                const r=new FileReader(); r.onload=e=>{ conn.send({type:'file', filetype:'image', content:e.target.result, id:fid}); addImageBubble(e.target.result, fid, 'my', true); }; r.readAsDataURL(f);
+            } else {
+                heldFiles[fid]=f; conn.send({type:'file-offer',id:fid,name:f.name,size:f.size}); addMsg(`Offered: ${f.name}`, 'my'); 
+            }
+        }}
+        
+        function handleIncomingFile(d) { if(d.filetype === 'image') addImageBubble(d.content, d.id, 'other', false); }
+        
+        function addImageBubble(content, id, sender, allowed) {
+            let btnHtml = '';
+            if(sender === 'other') {
+                btnHtml = `<button id="btn-${id}" onclick="requestImageSave('${id}')" class="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] font-bold px-3 py-1.5 rounded-full backdrop-blur-md hover:bg-black/80 transition">🔒 Request Save</button>`;
+            }
+            
+            let html = `<div class="max-w-[240px] mb-1.5 ${sender==='my'?'ml-auto':'mr-auto'}"><div class="relative group"><img src="${content}" class="rounded-lg w-full border border-gray-500/20">${btnHtml}</div></div>`;
+            const b=document.getElementById('chat-box'); b.insertAdjacentHTML('beforeend', html); b.scrollTop=b.scrollHeight; if(sender==='other') msgSound.play();
+        }
+
+        function requestImageSave(id) { conn.send({type:'img-req', id:id}); const btn=document.getElementById(`btn-${id}`); btn.innerText="⏳ Requested..."; btn.disabled=true; }
+        function handleImageRequest(d) { showCustomConfirm("Image Save Request", "Friend wants to save your photo.", () => { conn.send({type:'img-allow', id:d.id}); showToast("Allowed"); }); }
+        function handleImageAllow(d) {
+            const btn = document.getElementById(`btn-${d.id}`);
+            if(btn) {
+                const img = btn.previousElementSibling; 
+                const newBtn = document.createElement('a'); newBtn.href = img.src; newBtn.download = `secret_img_${d.id}.png`;
+                newBtn.className = "absolute bottom-2 right-2 w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center shadow-lg hover:scale-110 transition";
+                newBtn.innerHTML = '<i class="fas fa-download text-xs"></i>';
+                btn.replaceWith(newBtn); showToast("Request Accepted!");
+            }
+        }
+        
+        function handleFileOffer(d){ let h=`<div class="max-w-[85%] px-4 py-3 rounded-2xl mb-1.5 shadow-sm mr-auto" style="background-color:var(--bubble-other);color:var(--text-color);"><p class="text-sm font-bold">${d.name}</p><p class="text-xs opacity-70">${(d.size/1024/1024).toFixed(2)} MB</p><button onclick="requestDownload('${d.id}')" class="mt-2 bg-green-600 text-white text-xs px-3 py-1 rounded-full">Request Download</button></div>`; const b=document.getElementById('chat-box'); b.insertAdjacentHTML('beforeend', h); b.scrollTop=b.scrollHeight; msgSound.play(); }
+        function requestDownload(id){ conn.send({type:'file-request', id:id}); showToast("Request Sent..."); }
+        function handleFileRequest(d){ if(heldFiles[d.id]){ showCustomConfirm("File Download", `Friend wants ${heldFiles[d.id].name}`, () => { const r=new FileReader(); r.onload=e=>{conn.send({type:'file-data',content:e.target.result,name:heldFiles[d.id].name})}; r.readAsDataURL(heldFiles[d.id]); }); } }
+        function handleFileData(d){ const a=document.createElement('a'); a.href=d.content; a.download=d.name; a.click(); showToast("Download Started!"); }
+
+        function handleSysMsg(msg) {
+            if(msg === 'ended') showCallEndedPopup("Call Ended");
+            if(msg === 'declined') showCallEndedPopup("Call Declined");
+        }
+
+        function sendTyping() { if(conn?.open) conn.send({type:'typing', content:true}); }
+        function stopTyping() { if(conn?.open) conn.send({type:'typing', content:false}); }
+        function showTyping(isTyping) { const status = document.getElementById('chat-sub-status'); if(isTyping) { status.innerText = "Typing..."; status.style.color = "var(--main-color)"; status.classList.add('animate-pulse'); } else { status.innerText = "● Secure"; status.style.color = "#22c55e"; status.classList.remove('animate-pulse'); } }
+
+        function showCallEndedPopup(text) { 
+            stopTracks(); ringtone.pause();
+            document.getElementById('end-text').innerText = text || "Call Ended";
+            const icon = document.getElementById('end-icon');
+            if(text === 'Call Declined') icon.className = "fas fa-user-times text-red-500 text-xl";
+            else icon.className = "fas fa-phone-slash text-red-500 text-xl";
+
+            document.getElementById('video-ui').classList.add('hidden'); 
+            document.getElementById('call-end-popup').classList.remove('hidden'); 
+            setTimeout(() => { document.getElementById('call-end-popup').classList.add('hidden'); }, 1500); 
+            resetHeaderUI(); 
+        }
+        function resetHeaderUI() { const h = document.getElementById('header-buttons'); document.getElementById('chat-sub-status').innerText = '● Secure'; h.innerHTML = `<button onclick="startCall(false)" class="p-2.5 rounded-full hover:bg-gray-500/10 transition active:scale-90"><i class="fas fa-phone-alt text-lg"></i></button><button onclick="startCall(true)" class="p-2.5 rounded-full hover:bg-gray-500/10 transition active:scale-90"><i class="fas fa-video text-lg"></i></button>`; }
+
+        function sendMessage(){ const i=document.getElementById('msg-input'); if(!i.value)return; if(conn?.open){ conn.send({type:'text',content:i.value}); addMsg(i.value,'my'); i.value=''; stopTyping(); } }
+
+        function addMsg(c,t){ 
+            const b=document.getElementById('chat-box'), d=document.createElement('div'); 
+            d.className = `max-w-[85%] px-4 py-2.5 text-[15px] mb-1.5 break-words shadow-sm rounded-2xl ${t==='my' ? 'ml-auto rounded-br-none' : 'mr-auto rounded-bl-none burn-msg'}`; 
+            d.style.backgroundColor = t==='my' ? 'var(--bubble-my)' : 'var(--bubble-other)';
+            d.style.color = t==='my' ? 'white' : 'var(--text-color)';
+            if(t === 'other') { d.innerHTML = `${c} <span class="text-[9px] opacity-50 block text-right mt-1"><i class="fas fa-fire"></i> 1m</span>`; } else { d.innerHTML = c; } b.appendChild(d); b.scrollTop=b.scrollHeight; if(t==='other') msgSound.play();
+        }
+
+        function answerCall(){ ringtone.pause(); ringtone.currentTime = 0; document.getElementById('incoming-modal').classList.add('hidden'); const c = { video: isVideoCall, audio: true }; navigator.mediaDevices.getUserMedia(c).then(s=>{ localStream=s; if(isVideoCall) { document.getElementById('local-video').srcObject=s; document.getElementById('video-ui').classList.remove('hidden'); } else { enableAudioModeUI(); } pendingCall.answer(s); handleCall(pendingCall); }).catch(()=>showToast("Permission Denied (Check HTTPS)")); }
+        function startCall(v){ 
+            if(!conn)return; isVideoCall = v; 
+            navigator.mediaDevices.getUserMedia({video: v, audio: true}).then(s=>{ 
+                localStream=s; if(v) { document.getElementById('local-video').srcObject=s; document.getElementById('video-ui').classList.remove('hidden'); } else { enableAudioModeUI(); }
+                const c = peer.call(conn.peer, s, { metadata: { type: v ? 'video' : 'audio' } }); handleCall(c); 
+            }).catch(e=>showToast("Mic/Cam Error (Check HTTPS)")); 
+        }
+        function handleCall(c){ currentCall=c; c.on('stream', s => { if(isVideoCall) { document.getElementById('remote-video').srcObject=s; } else { document.getElementById('audio-element').srcObject=s; } }); c.on('close', endCallUI); }
+        
+        function switchToVideo() { if(!currentCall) return; endCall(); setTimeout(() => startCall(true), 500); }
+        function endCall(){ currentCall?.close(); stopTracks(); conn?.send({type:'sys', content:'ended'}); showCallEndedPopup("Call Ended"); }
+        function endCallUI(){ showCallEndedPopup("Call Ended"); }
+        function stopTracks() { if(localStream) { localStream.getTracks().forEach(track => track.stop()); localStream = null; } document.getElementById('remote-video').srcObject = null; document.getElementById('local-video').srcObject = null; }
+
+        function enableAudioModeUI() { const h = document.getElementById('header-buttons'); h.innerHTML = `<button onclick="toggleAudio()" class="p-2 rounded-full hover:bg-gray-500/10 transition active:scale-90" title="Mute"><i id="mic-icon-audio" class="fas fa-microphone text-lg"></i></button><button onclick="endCall()" class="p-2 rounded-full hover:bg-gray-500/10 transition active:scale-90 text-red-500" title="End Call"><i class="fas fa-phone-slash text-lg"></i></button>`; showToast("Audio Call Active"); }
+        function toggleAudio(){ if(localStream){ const t=localStream.getAudioTracks()[0]; t.enabled=!t.enabled; const icon = document.getElementById('mic-icon-video'); if(icon) { if(t.enabled){icon.className="fas fa-microphone text-sm";}else{icon.className="fas fa-microphone-slash text-red-500 text-sm";} } const aIcon = document.getElementById('mic-icon-audio'); if(aIcon) { if(t.enabled){aIcon.className="fas fa-microphone text-lg";}else{aIcon.className="fas fa-microphone-slash text-red-500 text-lg";} } showToast(t.enabled?"Mic On":"Mic Muted"); } }
+        function toggleVideo(){ if(localStream){ const t=localStream.getVideoTracks()[0]; t.enabled=!t.enabled; showToast(t.enabled?"Cam On":"Cam Off"); const icon=document.getElementById('vid-icon'); if(t.enabled)icon.className="fas fa-video text-sm"; else icon.className="fas fa-video-slash text-red-500 text-sm"; } }
+        async function switchCamera() { if(!localStream) return; currentCamMode = currentCamMode === 'user' ? 'environment' : 'user'; const tracks = localStream.getVideoTracks(); tracks.forEach(t => t.stop()); const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentCamMode }, audio: true }); const newTrack = newStream.getVideoTracks()[0]; const sender = currentCall.peerConnection.getSenders().find(s => s.track.kind === 'video'); sender.replaceTrack(newTrack); document.getElementById('local-video').srcObject = newStream; localStream = newStream; }
+        
+        function declineCall(){ ringtone.pause(); ringtone.currentTime = 0; document.getElementById('incoming-modal').classList.add('hidden'); pendingCall?.close(); if(pendingCall && conn) conn.send({type:'sys', content:'declined'}); showToast("Declined"); }
+        function copyId(){ navigator.clipboard.writeText(myID); showToast("Copied!"); }
+        function copyLink(){ navigator.clipboard.writeText(`${location.origin}${location.pathname}?join=${myID}`); showToast("Copied!"); }
+    </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"2c3c2598b5a344dc91231e6db44cb51c","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
